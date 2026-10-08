@@ -1,4 +1,4 @@
-import { pgTable, text, timestamp, boolean, decimal, index } from 'drizzle-orm/pg-core'
+import { pgTable, text, timestamp, boolean, decimal, index, bigint, jsonb, uniqueIndex, integer } from 'drizzle-orm/pg-core'
 
 // --- Better Auth required tables -------------------------------------------
 // Column names are camelCase to match Better Auth's defaults. Do not rename.
@@ -139,3 +139,48 @@ export const sourceRatings = pgTable('source_ratings', {
   createdAt: timestamp('createdAt').notNull().defaultNow(),
   updatedAt: timestamp('updatedAt').notNull().defaultNow(),
 })
+
+
+// --- AeroTrace device telemetry and remote-control command queue ---
+// Add these only once; migrate the database after updating the schema.
+export const telemetryReadings = pgTable('telemetry_readings', {
+  id: text('id').primaryKey(),
+  deviceId: text('device_id').notNull(),
+  sequenceNumber: bigint('sequence_number', { mode: 'bigint' }).notNull(),
+  recordedAt: timestamp('recorded_at', { withTimezone: true }).notNull(),
+  latitude: decimal('latitude', { precision: 11, scale: 8 }),
+  longitude: decimal('longitude', { precision: 12, scale: 8 }),
+  gpsAccuracyM: decimal('gps_accuracy_m', { precision: 10, scale: 2 }),
+  ph: decimal('ph', { precision: 8, scale: 3 }),
+  tdsPpm: decimal('tds_ppm', { precision: 12, scale: 3 }),
+  conductivityUsCm: decimal('conductivity_us_cm', { precision: 12, scale: 3 }),
+  pm25UgM3: decimal('pm25_ug_m3', { precision: 12, scale: 3 }),
+  temperatureC: decimal('temperature_c', { precision: 8, scale: 3 }),
+  humidityPct: decimal('humidity_pct', { precision: 8, scale: 3 }),
+  pressureHpa: decimal('pressure_hpa', { precision: 10, scale: 3 }),
+  batteryPct: decimal('battery_pct', { precision: 6, scale: 2 }),
+  signalDbm: integer('signal_dbm'),
+  opticalDensity: decimal('optical_density', { precision: 12, scale: 5 }),
+  dustSensorVoltageV: decimal('dust_sensor_voltage_v', { precision: 8, scale: 5 }),
+  sourceMode: text('source_mode').notNull().default('sensor'),
+  rawPayload: jsonb('raw_payload').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  uniqueIndex('telemetry_device_sequence_uq').on(table.deviceId, table.sequenceNumber),
+  index('telemetry_device_date_idx').on(table.deviceId, table.createdAt),
+])
+
+export const deviceCommands = pgTable('device_commands', {
+  id: text('id').primaryKey(),
+  deviceId: text('device_id').notNull(),
+  command: text('command').notNull(),
+  payload: jsonb('payload'),
+  status: text('status').notNull().default('pending'),
+  result: jsonb('result'),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+  claimedAt: timestamp('claimed_at', { withTimezone: true }),
+  completedAt: timestamp('completed_at', { withTimezone: true }),
+}, (table) => [
+  index('device_command_queue_idx').on(table.deviceId, table.status, table.createdAt),
+])

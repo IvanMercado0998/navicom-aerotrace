@@ -95,6 +95,7 @@ interface DailyTelemetrySummary {
 
 interface NodeDetailsPanelProps {
   nodeName: string
+  deviceId?: string // AeroTrace hardware ID; separate from WAQI station ID
   nodeDescription?: string
   mode: string
   reading?: NodeReading
@@ -335,6 +336,7 @@ const summarizeTelemetry = (samples: TelemetrySample[]): DailyTelemetrySummary[]
 
 export const NodeDetailsPanel: FC<NodeDetailsPanelProps> = ({
   nodeName,
+  deviceId,
   nodeDescription,
   mode,
   reading,
@@ -352,6 +354,27 @@ export const NodeDetailsPanel: FC<NodeDetailsPanelProps> = ({
   onTelemetryUpdate,
   onHistoryUpdate,
 }) => {
+  const [nodeTelemetry, setNodeTelemetry] = useState<any | null>(null)
+  const [nodeTelemetryError, setNodeTelemetryError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!deviceId) { setNodeTelemetry(null); return }
+    let cancelled = false
+    const getNodeTelemetry = async () => {
+      try {
+        const resp = await fetch(`/api/telemetry/latest?deviceId=${encodeURIComponent(deviceId)}`, { cache: 'no-store' })
+        if (!resp.ok) throw new Error(`Telemetry HTTP ${resp.status}`)
+        const row = await resp.json()
+        if (!cancelled) { setNodeTelemetry(row); setNodeTelemetryError(null) }
+      } catch (error) {
+        if (!cancelled) setNodeTelemetryError(error instanceof Error ? error.message : 'Telemetry unavailable')
+      }
+    }
+    void getNodeTelemetry()
+    const timer = setInterval(() => { void getNodeTelemetry() }, 15000)
+    return () => { cancelled = true; clearInterval(timer) }
+  }, [deviceId])
+
   const [expandedSection, setExpandedSection] = useState<string | null>('history')
   const [expandedDay, setExpandedDay] = useState<string | null>(null)
   const [telemetry, setTelemetry] = useState<LiveTelemetrySnapshot | null>(null)
@@ -575,6 +598,46 @@ export const NodeDetailsPanel: FC<NodeDetailsPanelProps> = ({
           {mode === 'realtime' ? '● Real‑time Monitoring' : '⊡ Manual Mode'}
         </span>
       </div>
+
+      {deviceId && (
+        <section className="px-6 py-2">
+          <div className={`${glass} p-4 space-y-3`}>
+            <div className="flex justify-between items-center gap-2">
+              <h3 className="text-sm font-semibold text-white">AeroTrace Node Telemetry</h3>
+              <span className="text-[11px] text-white/50">{deviceId}</span>
+            </div>
+            {nodeTelemetryError && <p className="text-xs text-red-300">{nodeTelemetryError}</p>}
+            {nodeTelemetry ? (
+              <>
+                <p className="text-xs text-white/55">Received {new Date(nodeTelemetry.createdAt).toLocaleString()}
+                  {Date.now() - new Date(nodeTelemetry.createdAt).getTime() > 180000 ? ' · Stale data' : ''}
+                </p>
+                <div className="grid grid-cols-2 gap-2">
+                  {([
+                    ['pH', nodeTelemetry.ph, ''],
+                    ['EC', nodeTelemetry.conductivityUsCm, 'µS/cm'],
+                    ['TDS', nodeTelemetry.tdsPpm, 'ppm'],
+                    ['Optical index', nodeTelemetry.opticalDensity, ''],
+                    ['GP2Y output', nodeTelemetry.dustSensorVoltageV, 'V'],
+                    ['Temperature', nodeTelemetry.temperatureC, '°C'],
+                    ['Humidity', nodeTelemetry.humidityPct, '%'],
+                    ['LTE signal', nodeTelemetry.signalDbm, 'dBm'],
+                  ] as const).map(([label, value, unit]) => (
+                    <div className="rounded-lg bg-black/20 p-3" key={label}>
+                      <p className="text-[11px] text-white/50">{label}</p>
+                      <p className="text-sm font-semibold text-white">{value == null ? 'Unavailable' : `${value} ${unit}`}</p>
+                    </div>
+                  ))}
+                </div>
+                <p className="text-[11px] text-white/50">Source: {nodeTelemetry.sourceMode === 'manual_test' ? 'Manual test input' : 'Sensor telemetry'}</p>
+                {nodeTelemetry.latitude != null && nodeTelemetry.longitude != null && (
+                  <p className="text-xs text-white/70">GNSS: {nodeTelemetry.latitude}, {nodeTelemetry.longitude}</p>
+                )}
+              </>
+            ) : <p className="text-xs text-white/60">Waiting for AeroTrace telemetry...</p>}
+          </div>
+        </section>
+      )}
 
       <section className="px-6 py-2">
         <button
