@@ -61,6 +61,7 @@ import {
   FC,
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
 } from 'react'
@@ -74,6 +75,9 @@ import {
   Navigation,
   Target,
 } from 'lucide-react'
+
+const AEROTRACE_DEVICE_ID = "aerotrace-001"
+const AEROTRACE_SITE = { lat: 15.13175, lng: 120.58991666666667 } as const
 
 /* ----------------------------------------------------------------------
    Types
@@ -295,6 +299,34 @@ export const PollutionMap: FC<MapProps> = ({
   const perimeterLayer = useRef<L.LayerGroup | null>(null)
   const clickMarker = useRef<L.Marker | null>(null)
 
+  // This fallback node is for map presentation until a saved node exists in
+  // the parent/DB. It is NOT GNSS telemetry, and it does not write a DB row.
+  // If the app has registered AeroTrace already, use that node unchanged.
+  const mapNodes = useMemo<MonitoringNode[]>(() => {
+    const hasAeroTrace = nodes.some(n =>
+      n.id === AEROTRACE_DEVICE_ID ||
+      /aerotrace/i.test(n.name)
+    )
+    if (hasAeroTrace) {
+      // Preserve the database ID so parent selection handlers still work,
+      // but point the known AeroTrace map node to its configured fixed site.
+      // This is a display fallback, NOT an update to stored GNSS coordinates.
+      return nodes.map(n =>
+        n.id === AEROTRACE_DEVICE_ID || /aerotrace/i.test(n.name)
+          ? { ...n, latitude: String(AEROTRACE_SITE.lat), longitude: String(AEROTRACE_SITE.lng) }
+          : n
+      )
+    }
+    return [...nodes, {
+      id: AEROTRACE_DEVICE_ID,
+      name: 'AeroTrace Node 1 (fixed site)',
+      latitude: String(AEROTRACE_SITE.lat),
+      longitude: String(AEROTRACE_SITE.lng),
+      isActive: false, // device LTE/telemetry status is not verified
+      mode: 'manual',
+    }]
+  }, [nodes])
+
   const [mapReady, setMapReady] = useState(false)
 
   const [currentCenter, setCurrentCenter] = useState({
@@ -470,6 +502,18 @@ export const PollutionMap: FC<MapProps> = ({
     })
   }, [center])
 
+  // Selecting AeroTrace (or any existing node) moves the viewport to its pin.
+  useEffect(() => {
+    if (!mapReady || !mapInstance.current || !selectedNodeId) return
+    const node = mapNodes.find(n => n.id === selectedNodeId)
+    if (!node) return
+    const lat = Number(node.latitude)
+    const lng = Number(node.longitude)
+    if (Number.isFinite(lat) && Number.isFinite(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180) {
+      mapInstance.current.flyTo([lat, lng], Math.max(mapInstance.current.getZoom(), 15), { duration: 1.2 })
+    }
+  }, [mapReady, selectedNodeId, mapNodes])
+
   /* ------------------------------------------------------------------
      MARKERS – monitoring nodes
   ------------------------------------------------------------------ */
@@ -479,9 +523,10 @@ export const PollutionMap: FC<MapProps> = ({
 
     markersLayer.current.clearLayers()
 
-    nodes.forEach(node => {
+    mapNodes.forEach(node => {
       const lat = parseFloat(node.latitude)
       const lng = parseFloat(node.longitude)
+      if (!Number.isFinite(lat) || !Number.isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) return
       const reading = readings[node.id]
       const isSelected = node.id === selectedNodeId
 
@@ -498,7 +543,7 @@ export const PollutionMap: FC<MapProps> = ({
         // Selected node's marker (the "pointer") gets the dedicated
         // high-priority pane so it's never visually buried under the
         // perimeter circle, other markers, or tile-layer redraws.
-        pane: isSelected ? 'pointerPane' : undefined,
+        ...(isSelected ? { pane: 'pointerPane' } : {}),
       })
 
       // ------------------- popup content -------------------
@@ -506,6 +551,7 @@ export const PollutionMap: FC<MapProps> = ({
       const popupHTML = `
         <div class="p-4 min-w-[220px]">
           <h3 class="font-bold text-white text-base mb-2">${node.name}</h3>
+          ${node.id === AEROTRACE_DEVICE_ID ? '<p class="text-xs text-amber-300 mb-2">Fixed site coordinates; GNSS not verified</p>' : ''}
           <div class="space-y-1.5">
             <div class="flex items-center justify-between text-sm">
               <span class="text-gray-400">Status:</span>
@@ -570,7 +616,7 @@ export const PollutionMap: FC<MapProps> = ({
       mapInstance.current?.closePopup()
     }
   }, [
-    nodes,
+    mapNodes,
     selectedNodeId,
     onNodeSelect,
     readings,
@@ -680,7 +726,7 @@ export const PollutionMap: FC<MapProps> = ({
     const radiusKm = nodePerimeters[selectedNodeId]
     if (!radiusKm) return
 
-    const node = nodes.find(n => n.id === selectedNodeId)
+    const node = mapNodes.find(n => n.id === selectedNodeId)
     if (!node) return
 
     const lat = parseFloat(node.latitude)
@@ -768,7 +814,7 @@ export const PollutionMap: FC<MapProps> = ({
     }
     animatePulse()
     // -------------------------------------------------------------------------------
-  }, [selectedNodeId, nodePerimeters, nodes, mapReady])
+  }, [selectedNodeId, nodePerimeters, mapNodes, mapReady])
 
   /* ------------------------------------------------------------------
      MAP CONTROLS – custom UI placed over the map (high z‑index)
@@ -912,13 +958,13 @@ export const PollutionMap: FC<MapProps> = ({
             <div className="flex items-center gap-1.5">
               <div className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
               <span className="text-white/60">
-                Active: {nodes.filter(n => n.isActive).length}
+                Active: {mapNodes.filter(n => n.isActive).length}
               </span>
             </div>
             <div className="flex items-center gap-1.5">
               <div className="w-2 h-2 rounded-full bg-red-400" />
               <span className="text-white/60">
-                Inactive: {nodes.filter(n => !n.isActive).length}
+                Inactive: {mapNodes.filter(n => !n.isActive).length}
               </span>
             </div>
             <div className="flex items-center gap-1.5">
