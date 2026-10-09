@@ -1,7 +1,7 @@
 'use client'
 
-import { useEffect, useState } from 'react'
-import { Settings2, X, MapPin, Radio, FlaskConical } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { Settings2, X, MapPin, Radio, FlaskConical, Loader2 } from 'lucide-react'
 
 const DEVICE_ID = 'aerotrace-001'
 const SITE = { lat: 15.13175, lng: 120.58991666666667 }
@@ -56,6 +56,25 @@ export function AeroTraceTelemetryPanel({ onClose }: { onClose: () => void }) {
   const [error, setError] = useState('')
   const [preset, setPreset] = useState<number | null>(null)
   const [showControls, setShowControls] = useState(false)
+  // This is UI preparation for a test fixture, not physical sensor acquisition.
+  const [sensorLoading, setSensorLoading] = useState(true)
+  const previewTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const selectTestPreset = (index: number) => {
+    if (previewTimer.current) clearTimeout(previewTimer.current)
+    setPreset(index)
+    setSensorLoading(true)
+    previewTimer.current = setTimeout(() => {
+      setSensorLoading(false)
+      previewTimer.current = null
+    }, 9050)
+  }
+  useEffect(() => {
+    previewTimer.current = setTimeout(() => {
+      setSensorLoading(false)
+      previewTimer.current = null
+    }, 9200)
+    return () => { if (previewTimer.current) clearTimeout(previewTimer.current) }
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -141,23 +160,40 @@ export function AeroTraceTelemetryPanel({ onClose }: { onClose: () => void }) {
         </div>
         {showControls && (
           <div className="flex items-center gap-2 rounded-lg border border-blue-100 bg-blue-50/50 p-2" aria-label="Manual classification test controls">
-            {PRESETS.map((_, i) => <button key={i} type="button" onClick={() => setPreset(i)} className={`rounded-md border px-3 py-1.5 text-xs font-semibold ${chosen === i ? 'border-blue-600 bg-blue-600 text-white' : 'border-blue-200 bg-white text-blue-700'}`}>B{i + 1}</button>)}
-            {hasValidScores && <button type="button" onClick={() => setPreset(null)} className="ml-auto text-xs font-semibold text-blue-700">Device</button>}
+            {PRESETS.map((_, i) => <button key={i} type="button" onClick={() => selectTestPreset(i)} className={`rounded-md border px-3 py-1.5 text-xs font-semibold ${chosen === i ? 'border-blue-600 bg-blue-600 text-white' : 'border-blue-200 bg-white text-blue-700'}`}>B{i + 1}</button>)}
+            {hasValidScores && <button type="button" onClick={() => { if (previewTimer.current) clearTimeout(previewTimer.current); setPreset(null); setSensorLoading(false) }} className="ml-auto text-xs font-semibold text-blue-700">Device</button>}
           </div>
         )}
         <section className="rounded-xl border border-slate-200 bg-white p-4">
           <div className="mb-3 flex items-center justify-between gap-2">
             <div className="flex items-center gap-2 text-xs font-semibold text-slate-800"><FlaskConical size={15} className="text-blue-600"/> Sensor measurements</div>
-            <span className="rounded-full bg-blue-50 px-2 py-1 text-[10px] font-semibold text-blue-700">{useTestSensorValues ? 'SIMULATED' : latest ? 'DEVICE' : 'UNAVAILABLE'}</span>
+            <span className="rounded-full bg-blue-50 px-2 py-1 text-[10px] font-semibold text-blue-700">{sensorLoading ? 'LOADING' : useTestSensorValues ? 'TESTING' : latest ? 'DEVICE' : 'UNAVAILABLE'}</span>
           </div>
-          <div className="grid grid-cols-2 gap-2">
-            {sensorCards.map(([name, value, unit, digits]) => (
-              <div key={name} className="rounded-lg border border-blue-50 bg-slate-50 p-3">
-                <p className="text-[11px] text-slate-500">{name}</p>
-                <p className="mt-1 text-sm font-semibold tabular-nums text-slate-900">{display(value, digits)} {numeric(value) === null ? '' : unit}</p>
+          {sensorLoading ? (
+            <div role="status" aria-live="polite" className="space-y-3">
+              <div className="flex items-center gap-2 rounded-lg border border-blue-100 bg-blue-50 px-3 py-2.5 text-xs text-blue-700">
+                <Loader2 size={15} className="animate-spin" aria-hidden="true" />
+                <span>Preparing {useTestSensorValues ? 'test sensor preview' : 'telemetry display'}…</span>
               </div>
-            ))}
-          </div>
+              <div className="grid grid-cols-2 gap-2" aria-hidden="true">
+                {sensorCards.map(([name]) => (
+                  <div key={name} className="rounded-lg border border-blue-50 bg-slate-50 p-3">
+                    <p className="text-[11px] text-slate-500">{name}</p>
+                    <div className="mt-2 h-5 w-2/3 animate-pulse rounded bg-blue-100" />
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 gap-2">
+              {sensorCards.map(([name, value, unit, digits]) => (
+                <div key={name} className="rounded-lg border border-blue-50 bg-slate-50 p-3">
+                  <p className="text-[11px] text-slate-500">{name}</p>
+                  <p className="mt-1 text-sm font-semibold tabular-nums text-slate-900">{display(value, digits)} {numeric(value) === null ? '' : unit}</p>
+                </div>
+              ))}
+            </div>
+          )}
           {useTestSensorValues && <p className="mt-3 text-[11px] text-blue-700">Test fixtures: OD, EC and pH use firmware placeholder centroids; TDS = 0.5 × EC. Temperature and humidity are illustrative. None are sensor observations.</p>}
           {timestamp && !useTestSensorValues && <p className="mt-3 text-[11px] text-slate-500">Last uploaded: {new Date(timestamp).toLocaleString()}</p>}
           {error && <p className="mt-2 text-[11px] text-amber-700">Telemetry service: {error}</p>}
